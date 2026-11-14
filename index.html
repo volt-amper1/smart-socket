@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Умная розетка</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; background: #121212; color: #eee; max-width: 420px; margin: 0 auto; padding: 20px; }
+  .card { background: #1e1e1e; border-radius: 14px; padding: 18px; margin-bottom: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+  .status { font-size: 13px; color: #888; }
+  .online { color: #4caf50; font-weight: bold; }
+  .btn { width: 100%; padding: 14px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+  .btn-off { background: #333; color: #bbb; }
+  .btn-on { background: #2e7d32; color: #fff; }
+  .timer-row { display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 12px; border-top: 1px solid #2c2c2c; font-size: 14px; }
+  input[type="time"] { background: #2c2c2c; color: #fff; border: 1px solid #444; border-radius: 6px; padding: 4px 6px; }
+  .save-btn { background: #1976d2; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; margin-top: 10px; width: 100%; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h2 style="margin:0">Умная розетка</h2>
+  <div>
+    <div id="conn" class="status">Подключение...</div>
+    <div id="rtc-time" class="status" style="text-align:right">RTC: --:--:--</div>
+  </div>
+</div>
+
+<!-- КАНАЛ 1 -->
+<div class="card">
+  <h3 style="margin-top:0">Розетка 1</h3>
+  <button id="btn1" class="btn btn-off" onclick="toggleRelay(1)">ВЫКЛЮЧЕНА</button>
+  <div class="timer-row">
+    <label><input type="checkbox" id="t1_en"> Таймер</label>
+    <div>
+      Вкл: <input type="time" id="t1_on" value="08:00">
+      Выкл: <input type="time" id="t1_off" value="22:00">
+    </div>
+  </div>
+  <button class="save-btn" onclick="saveTimer(1)">Сохранить таймер 1</button>
+</div>
+
+<!-- КАНАЛ 2 -->
+<div class="card">
+  <h3 style="margin-top:0">Розетка 2</h3>
+  <button id="btn2" class="btn btn-off" onclick="toggleRelay(2)">ВЫКЛЮЧЕНА</button>
+  <div class="timer-row">
+    <label><input type="checkbox" id="t2_en"> Таймер</label>
+    <div>
+      Вкл: <input type="time" id="t2_on" value="09:00">
+      Выкл: <input type="time" id="t2_off" value="23:00">
+    </div>
+  </div>
+  <button class="save-btn" onclick="saveTimer(2)">Сохранить таймер 2</button>
+</div>
+
+<script>
+  const TOPIC_PREFIX = "smart_socket_994821"; // ДОЛЖЕН СОВПАДАТЬ СО СКЕТЧЕМ!
+  const client = mqtt.connect("wss://broker.hivemq.com:8884/mqtt");
+  
+  let state = { r1: false, r2: false };
+  let timersLoaded = false;
+
+  client.on("connect", () => {
+    document.getElementById("conn").innerHTML = '<span class="online">● В сети</span>';
+    client.subscribe(TOPIC_PREFIX + "/state");
+  });
+
+  client.on("message", (topic, message) => {
+    const data = JSON.parse(message.toString());
+    state.r1 = data.r1;
+    state.r2 = data.r2;
+    
+    updateBtn("btn1", state.r1);
+    updateBtn("btn2", state.r2);
+    document.getElementById("rtc-time").innerText = "RTC: " + data.time;
+
+    if (!timersLoaded) {
+      document.getElementById("t1_en").checked = data.t1_en;
+      document.getElementById("t1_on").value = pad(data.t1_on_h) + ":" + pad(data.t1_on_m);
+      document.getElementById("t1_off").value = pad(data.t1_off_h) + ":" + pad(data.t1_off_m);
+
+      document.getElementById("t2_en").checked = data.t2_en;
+      document.getElementById("t2_on").value = pad(data.t2_on_h) + ":" + pad(data.t2_on_m);
+      document.getElementById("t2_off").value = pad(data.t2_off_h) + ":" + pad(data.t2_off_m);
+      timersLoaded = true;
+    }
+  });
+
+  function updateBtn(id, isOn) {
+    const btn = document.getElementById(id);
+    btn.className = isOn ? "btn btn-on" : "btn btn-off";
+    btn.innerText = isOn ? "ВКЛЮЧЕНА" : "ВЫКЛЮЧЕНА";
+  }
+
+  function toggleRelay(num) {
+    const payload = num === 1 ? { r1: !state.r1 } : { r2: !state.r2 };
+    client.publish(TOPIC_PREFIX + "/cmd", JSON.stringify(payload));
+  }
+
+  function saveTimer(num) {
+    const en = document.getElementById(`t${num}_en`).checked;
+    const [onH, onM] = document.getElementById(`t${num}_on`).value.split(":").map(Number);
+    const [offH, offM] = document.getElementById(`t${num}_off`).value.split(":").map(Number);
+    
+    const payload = num === 1 
+      ? { t1_en: en, t1_on_h: onH, t1_on_m: onM, t1_off_h: offH, t1_off_m: offM }
+      : { t2_en: en, t2_on_h: onH, t2_on_m: onM, t2_off_h: offH, t2_off_m: offM };
+      
+    client.publish(TOPIC_PREFIX + "/cmd", JSON.stringify(payload));
+    alert("Настройки таймера отправлены!");
+  }
+
+  function pad(n) { return n < 10 ? "0" + n : n; }
+</script>
+</body>
+</html>
